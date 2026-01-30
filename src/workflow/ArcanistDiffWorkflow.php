@@ -348,6 +348,8 @@ EOTEXT
     $this->runRepositoryAPISetup();
     $this->runDiffSetupBasics();
 
+    $this->validateBranchPushed();
+
     $commit_message = $this->buildCommitMessage();
 
     $this->dispatchEvent(
@@ -2897,4 +2899,108 @@ EOTEXT
     return head($revision_refs);
   }
 
+  /*
+   * Check if current local branch exists on remote
+   *
+   */
+  private function validateBranchPushed() {
+
+    $require_pushed = $this->getConfigFromAnySource('arc.diff.push-before-diff.enabled', false);
+    if (!$require_pushed) {
+      return;
+    }
+
+    $remote = $this->getConfigFromAnySource('arc.diff.push-before-diff.remote', 'origin');
+    $mode   = $this->getConfigFromAnySource('arc.diff.push-before-diff.mode', 'error');
+
+    $repository = $this->getRepositoryAPI();
+    if (!$repository instanceof ArcanistGitAPI) {
+      // Only supported for Git repositories.
+      return;
+    }
+
+    $branch = $repository->getBranchName();
+    if (!$branch) {
+      $this->handleRequirePushedFailure(
+        $mode,
+        "You are in a detached HEAD state. Unable to verify if commits are pushed."
+      );
+      return;
+    }
+
+    // Verify remote exists
+    $remotes = trim(implode("\n", $repository->execxLocal('remote')));
+    if (!preg_match('/^'.preg_quote($remote, '/').'$/m', $remotes)) {
+      $this->handleRequirePushedFailure(
+        $mode,
+        sprintf("Configured remote '%s' does not exist.", $remote)
+      );
+      return;
+    }
+
+    // Print info
+    $this->writeInfo("Checking if branch '{$branch}' is pushed on remote '{$remote}'...", true);
+
+    // Verify remote branch exists
+    try {
+      $repository->execxLocal(
+        'show-ref --verify --quiet refs/remotes/%s/%s',
+        $remote,
+        $branch
+      );
+    } catch (Exception $ex) {
+      $this->handleRequirePushedFailure(
+        $mode,
+        sprintf(
+          "Remote branch '%s/%s' does not exist. Please push your branch first.",
+          $remote,
+          $branch
+        )
+      );
+      return;
+    }
+
+    // Check for commits not present on the remote branch
+    $result = trim(implode("\n", $repository->execxLocal('rev-list %s/%s..HEAD', $remote, $branch)));
+
+    if ($result !== '') {
+      $commits = explode("\n", $result);
+      $extra = ( count($commits) > 5 ? "\n  and more..." : '' );
+
+      $message = sprintf(
+        "Your branch '%s' contains commits not present on '%s/%s':\n\n  %s%s\n\n".
+        "Please push your branch before creating a review.",
+        $branch,
+        $remote,
+        $branch,
+        implode("\n  ", array_slice($commits, 0, 5)),
+        $extra
+      );
+
+      $this->handleRequirePushedFailure($mode, $message);
+    }
+  }
+
+  private function handleRequirePushedFailure($mode, $message) {
+    if ($mode === 'warning') {
+      $this->writeWarn('WARNING', true);
+      printf(trim($message));
+
+      $confirmed = phutil_console_confirm(
+        "Branch not fully pushed. Continue anyway?",
+        $default_no = true
+      );
+
+      if (!$confirmed) {
+        throw new ArcanistUsageException(
+          "Operation aborted by user because branch is not fully pushed."
+        );
+      }
+
+    } else {
+      throw new ArcanistUsageException($message);
+    }
+  }
+
 }
+
