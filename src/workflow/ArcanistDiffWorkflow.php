@@ -333,6 +333,44 @@ EOTEXT
           'hg' => pht('Mercurial does not support %s yet.', '--head'),
         ),
       ),
+      'no-push-before-diff' => array(
+        'paramtype' => 'bool',
+        'help' => pht(
+          'If set, override .arcconfig and disable push-before-diff checks '.
+          'Overrides arc.diff.push-before-diff.enabled. '
+        ),
+        'supports' => array('git'),
+        'conflicts' => array(
+          'push-before-diff' => null,
+        ),
+      ),
+      'push-before-diff' => array(
+        'paramtype' => 'bool',
+        'help' => pht(
+          'If set, require the current branch to be pushed to the remote before creating a diff. '.
+          'Overrides arc.diff.push-before-diff.enabled. '
+        ),
+        'supports' => array('git'),
+      ),
+      'push-before-diff-remote' => array(
+        'param' => 'remote',
+        'paramtype' => 'string',
+        'help' => pht(
+          'Specify the remote to check for pushed commits before creating a diff. '.
+          'Overrides arc.diff.push-before-diff.remote. '.
+          "Default : 'origin'."),
+        'supports' => array('git'),
+      ),
+      'push-before-diff-mode' => array(
+        'param' => 'mode',
+        'paramtype' => 'string',
+        'help' => pht(
+          'Select behavior if the branch is not pushed before diff: '.
+          '"error" (fail) or "warn" (print warning, continue). '.
+          'Overrides arc.diff.push-before-diff.mode. '.
+          "Default : 'error'."),
+        'supports' => array('git'),
+      ),
     );
 
     return $arguments;
@@ -2904,14 +2942,45 @@ EOTEXT
    *
    */
   private function validateBranchPushed() {
+    // Arguments CLI → .arcconfig → valeurs par défaut
+    if ($this->getArgument('no-push-before-diff')) {
+      return;
+    }
+    $require_pushed = $this->getArgument('push-before-diff');
+    if ($require_pushed === null) {
+      $require_pushed = $this->getConfigFromAnySource(
+        'arc.diff.push-before-diff.enabled',
+        false
+      );
+    }
 
-    $require_pushed = $this->getConfigFromAnySource('arc.diff.push-before-diff.enabled', false);
     if (!$require_pushed) {
       return;
     }
 
-    $remote = $this->getConfigFromAnySource('arc.diff.push-before-diff.remote', 'origin');
-    $mode   = $this->getConfigFromAnySource('arc.diff.push-before-diff.mode', 'error');
+    $remote = $this->getArgument('push-before-diff-remote');
+    if ($remote === null) {
+      $remote = $this->getConfigFromAnySource(
+        'arc.diff.push-before-diff.remote',
+        'origin'
+      );
+    }
+
+    $mode = $this->getArgument('push-before-diff-mode');
+    if ($mode === null) {
+      $mode = $this->getConfigFromAnySource(
+        'arc.diff.push-before-diff.mode',
+        'error'
+      );
+    }
+    if (!in_array($mode, array('error', 'warn'), true)) {
+      throw new ArcanistUsageException(
+        pht(
+          'Invalid value for --push-before-diff-mode: %s. Expected "error" or "warn".',
+          $mode
+        )
+      );
+    }
 
     $repository = $this->getRepositoryAPI();
     if (!$repository instanceof ArcanistGitAPI) {
@@ -2982,7 +3051,7 @@ EOTEXT
   }
 
   private function handleRequirePushedFailure($mode, $message) {
-    if ($mode === 'warning') {
+    if ($mode === 'warn') {
       $this->writeWarn('WARNING', true);
       printf(trim($message));
 
