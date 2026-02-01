@@ -2937,10 +2937,10 @@ EOTEXT
     return head($revision_refs);
   }
 
-  /*
-   * Check if current local branch exists on remote
-   *
-   */
+/*
+ * Check if current local branch exists on remote
+ *
+ */
   private function validateBranchPushed() {
     // Arguments CLI → .arcconfig → valeurs par défaut
     if ($this->getArgument('no-push-before-diff')) {
@@ -2988,65 +2988,106 @@ EOTEXT
       return;
     }
 
-    $branch = $repository->getBranchName();
-    if (!$branch) {
+    // Determine current local branch
+    $local_branch = $repository->getBranchName();
+    if (!$local_branch) {
       $this->handleRequirePushedFailure(
         $mode,
-        "You are in a detached HEAD state. Unable to verify if commits are pushed."
-      );
-      return;
-    }
-
-    // Verify remote exists
-    $remotes = trim(implode("\n", $repository->execxLocal('remote')));
-    if (!preg_match('/^'.preg_quote($remote, '/').'$/m', $remotes)) {
-      $this->handleRequirePushedFailure(
-        $mode,
-        sprintf("Configured remote '%s' does not exist.", $remote)
-      );
-      return;
-    }
-
-    // Print info
-    $this->writeInfo("Checking if branch '{$branch}' is pushed on remote '{$remote}'...", true);
-
-    // Verify remote branch exists
-    try {
-      $repository->execxLocal(
-        'show-ref --verify --quiet refs/remotes/%s/%s',
-        $remote,
-        $branch
-      );
-    } catch (Exception $ex) {
-      $this->handleRequirePushedFailure(
-        $mode,
-        sprintf(
-          "Remote branch '%s/%s' does not exist. Please push your branch first.",
-          $remote,
-          $branch
+        pht(
+          'You are in a detached HEAD state. Unable to verify if commits are pushed.'
         )
       );
       return;
     }
 
-    // Check for commits not present on the remote branch
-    $result = trim(implode("\n", $repository->execxLocal('rev-list %s/%s..HEAD', $remote, $branch)));
-
-    if ($result !== '') {
-      $commits = explode("\n", $result);
-      $extra = ( count($commits) > 5 ? "\n  and more..." : '' );
-
-      $message = sprintf(
-        "Your branch '%s' contains commits not present on '%s/%s':\n\n  %s%s\n\n".
-        "Please push your branch before creating a review.",
-        $branch,
-        $remote,
-        $branch,
-        implode("\n  ", array_slice($commits, 0, 5)),
-        $extra
+    // Read upstream configuration for the local branch
+    try {
+      $configured_remote = trim($repository->execxLocal(
+        'config --get branch.%s.remote',
+        $local_branch
+      )[0]);
+      $configured_merge = trim($repository->execxLocal(
+        'config --get branch.%s.merge',
+        $local_branch
+      )[0]);
+    } catch (Exception $ex) {
+      $this->handleRequirePushedFailure(
+        $mode,
+        pht(
+          'No upstream branch is configured for branch "%s" on remote "%s".',
+          $local_branch,
+          $remote
+        )
       );
+      return;
+    }
 
-      $this->handleRequirePushedFailure($mode, $message);
+    // Ensure upstream is configured for the expected remote
+    if ($configured_remote !== $remote) {
+      $this->handleRequirePushedFailure(
+        $mode,
+        pht(
+          'Branch "%s" is configured to push to remote "%s", but this workflow '.
+          'requires it to be pushed to "%s".',
+          $local_branch,
+          $configured_remote,
+          $remote
+        )
+      );
+      return;
+    }
+
+    // Extract upstream branch name from refs/heads/<branch>
+    if (!preg_match('#^refs/heads/(.+)$#', $configured_merge, $matches)) {
+      $this->handleRequirePushedFailure(
+        $mode,
+        pht(
+          'Unable to determine upstream branch name from merge ref "%s".',
+          $configured_merge
+        )
+      );
+      return;
+    }
+
+    $upstream_branch = $matches[1];
+
+    // Verify that the upstream branch exists on the remote
+    try {
+      $repository->execxLocal(
+        'show-ref --verify --quiet refs/remotes/%s/%s',
+        $remote,
+        $upstream_branch
+      );
+    } catch (Exception $ex) {
+      $this->handleRequirePushedFailure(
+        $mode,
+        pht(
+          'Upstream branch "%s/%s" does not exist on the remote.',
+          $remote,
+          $upstream_branch
+        )
+      );
+      return;
+    }
+
+    // Verify that there are no local commits missing from the upstream branch
+    list($ahead) = $repository->execxLocal(
+      'rev-list --count %s/%s..HEAD',
+      $remote,
+      $upstream_branch
+    );
+
+    if ((int)$ahead > 0) {
+      $this->handleRequirePushedFailure(
+        $mode,
+        pht(
+          'Local branch "%s" contains commits which have not been pushed to "%s/%s".',
+          $local_branch,
+          $remote,
+          $upstream_branch
+        )
+      );
+      return;
     }
   }
 
