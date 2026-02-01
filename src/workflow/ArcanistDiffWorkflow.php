@@ -2937,9 +2937,20 @@ EOTEXT
     return head($revision_refs);
   }
 
-/*
- * Check if current local branch exists on remote
+/**
+ * Verify that the current Git branch is pushed to the expected remote before
+ * creating a diff.
  *
+ * This check enforces that the local branch has an upstream configured for the
+ * remote defined by Arcanist (via CLI arguments or .arcconfig), and that:
+ *
+ *  - an upstream branch is explicitly configured for the current branch
+ *  - the upstream targets the expected remote
+ *  - the upstream branch exists on the remote
+ *  - all local commits are present on the upstream branch
+ *
+ * The behavior on failure (error or warning) is controlled by the
+ * `push-before-diff.mode` setting.
  */
   private function validateBranchPushed() {
     // Arguments CLI → .arcconfig → valeurs par défaut
@@ -2994,7 +3005,8 @@ EOTEXT
       $this->handleRequirePushedFailure(
         $mode,
         pht(
-          'You are in a detached HEAD state. Unable to verify if commits are pushed.'
+          "You are in a detached HEAD state.\n".
+          "Unable to verify if commits are pushed."
         )
       );
       return;
@@ -3014,9 +3026,13 @@ EOTEXT
       $this->handleRequirePushedFailure(
         $mode,
         pht(
-          'No upstream branch is configured for branch "%s" on remote "%s".',
+          "No upstream branch is configured for branch \"%s\" on remote \"%s\".\n".
+          "HINT: You may need to push your branch with:\n".
+          "      git push -u %s %s",
           $local_branch,
-          $remote
+          $remote,
+          $remote,
+          $local_branch
         )
       );
       return;
@@ -3027,8 +3043,7 @@ EOTEXT
       $this->handleRequirePushedFailure(
         $mode,
         pht(
-          'Branch "%s" is configured to push to remote "%s", but this workflow '.
-          'requires it to be pushed to "%s".',
+          "Branch \"%s\" is configured to push to remote \"%s\", but this workflow requires it to be pushed to \"%s\".",
           $local_branch,
           $configured_remote,
           $remote
@@ -3042,7 +3057,7 @@ EOTEXT
       $this->handleRequirePushedFailure(
         $mode,
         pht(
-          'Unable to determine upstream branch name from merge ref "%s".',
+          "Unable to determine upstream branch name from merge ref \"%s\".",
           $configured_merge
         )
       );
@@ -3062,7 +3077,11 @@ EOTEXT
       $this->handleRequirePushedFailure(
         $mode,
         pht(
-          'Upstream branch "%s/%s" does not exist on the remote.',
+          "Upstream branch \"%s/%s\" does not exist on the remote.\n".
+          "HINT: You may need to push your branch with:\n".
+          "      git push -u %s %s",
+          $remote,
+          $upstream_branch,
           $remote,
           $upstream_branch
         )
@@ -3081,19 +3100,49 @@ EOTEXT
       $this->handleRequirePushedFailure(
         $mode,
         pht(
-          'Local branch "%s" contains commits which have not been pushed to "%s/%s".',
+          "%s contains commits which have not been pushed.\n".
+          "HINT: You can push your commits with:\n".
+          "      git push %s %s\n",
           $local_branch,
           $remote,
-          $upstream_branch
+          $local_branch
         )
       );
       return;
     }
+    $this->writeInfo(
+      pht('Push-before-diff'),
+      pht(
+        'All commits on branch "%s" have been pushed to "%s/%s".',
+        $local_branch,
+        $remote,
+        $upstream_branch
+      )
+    );
   }
 
+/**
+ * Handle a branch push validation failure according to the configured mode.
+ *
+ * This function is called when `validateBranchPushed()` detects that the
+ * current Git branch is not fully pushed to the expected remote.
+ *
+ * Behavior depends on the `$mode` argument:
+ * 
+ *  - 'warn': Display a warning message and prompt the user to confirm whether
+ *    to continue despite the branch not being fully pushed.
+ *  - 'error': Immediately abort the workflow by throwing an exception with
+ *    the provided message.
+ *
+ * @param string $mode  The failure handling mode ('warn' or 'error').
+ * @param string $message  A human-readable message explaining the validation failure.
+ *
+ * @throws ArcanistUsageException  When the mode is 'error' or the user cancels
+ *                                after a warning prompt.
+ */
   private function handleRequirePushedFailure($mode, $message) {
     if ($mode === 'warn') {
-      $this->writeWarn('WARNING', true);
+      $this->writeWarn('Push-before-diff', true);
       printf(trim($message));
 
       $confirmed = phutil_console_confirm(
@@ -3103,11 +3152,13 @@ EOTEXT
 
       if (!$confirmed) {
         throw new ArcanistUsageException(
-          "Operation aborted by user because branch is not fully pushed."
+          "Operation aborted by user because branch is not pushed."
         );
       }
 
     } else {
+      // Append bypass hint
+      $message .= "\n\n".pht("You can bypass this check with '--no-push-before-diff'.");
       throw new ArcanistUsageException($message);
     }
   }
