@@ -3111,6 +3111,30 @@ EOTEXT
       );
       return;
     }
+    // Verify that we are not behind upstream
+    list($behind) = $repository->execxLocal(
+      'rev-list --count HEAD..%s/%s',
+      $remote,
+      $upstream_branch
+    );
+
+    if ((int)$behind > 0) {
+      $this->handleRequirePushedFailure(
+        $mode,
+        pht(
+          "%s/%s contains commits which are ahead of HEAD.\n".
+          "HINT: You should sync with remote:\n".
+          "      git pull %s\n".
+          "      git push %s %s\n",
+          $remote,
+          $upstream_branch,
+          $remote,
+          $remote,
+          $local_branch
+        )
+      );
+      return;
+    }
     $this->writeInfo(
       pht('Push-before-diff'),
       pht(
