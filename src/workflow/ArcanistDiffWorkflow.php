@@ -2959,10 +2959,10 @@ EOTEXT
     }
     $require_pushed = $this->getArgument('push-before-diff');
     if ($require_pushed === null) {
-      $require_pushed = $this->getConfigFromAnySource(
-        'arc.diff.push-before-diff.enabled',
-        false
-      );
+      $require_pushed = $this->getConfigFromAnySource('arc.diff.push-before-diff.enabled');
+      if($require_pushed === null){
+        $require_pushed = false;
+      }
     }
 
     if (!$require_pushed) {
@@ -2971,19 +2971,20 @@ EOTEXT
 
     $remote = $this->getArgument('push-before-diff-remote');
     if ($remote === null) {
-      $remote = $this->getConfigFromAnySource(
-        'arc.diff.push-before-diff.remote',
-        'origin'
-      );
+      $remote = $this->getConfigFromAnySource('arc.diff.push-before-diff.remote');
+      if ($remote=== null){
+        $remote = "origin";
+      }
     }
 
     $mode = $this->getArgument('push-before-diff-mode');
     if ($mode === null) {
-      $mode = $this->getConfigFromAnySource(
-        'arc.diff.push-before-diff.mode',
-        'error'
-      );
+      $mode = $this->getConfigFromAnySource('arc.diff.push-before-diff.mode');
+      if ( $mode === null) {
+        $mode = 'error';
+      }
     }
+
     if (!in_array($mode, array('error', 'warn'), true)) {
       throw new ArcanistUsageException(
         pht(
@@ -3128,7 +3129,7 @@ EOTEXT
  * current Git branch is not fully pushed to the expected remote.
  *
  * Behavior depends on the `$mode` argument:
- * 
+ *
  *  - 'warn': Display a warning message and prompt the user to confirm whether
  *    to continue despite the branch not being fully pushed.
  *  - 'error': Immediately abort the workflow by throwing an exception with
